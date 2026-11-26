@@ -1,0 +1,60 @@
+name: Build Windows app
+# Checks the app's engine on Linux, then builds the Windows programs on a Windows machine and publishes them
+# as a release you can download from the Releases page.
+on:
+  push:
+    branches: ["main"]
+    paths-ignore: ["app.zip"]   # a pushed app.zip is unpacked first; the unpack workflow then starts this build
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Every script must parse
+        run: |
+          for f in $(git ls-files '*.js'); do node --check "$f" || exit 1; done
+      - name: Test the app's engine against a pretend phone
+        run: npm test
+
+  build:
+    needs: checks
+    permissions:
+      contents: write   # publishing the release needs this; the checks above do not
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Build the Windows programs
+        run: npm run dist
+      - name: List what was built
+        shell: bash
+        run: ls -la dist/*.exe
+      - name: Keep the programs with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketTheater-Windows
+          path: dist/PocketTheater-*.exe
+          if-no-files-found: error
+      - name: Publish a release
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "windows-${GITHUB_RUN_NUMBER}" dist/PocketTheater-*.exe \
+            --title "Pocket Theater for Windows #${GITHUB_RUN_NUMBER}" \
+            --notes "Portable: a single .exe that runs without installing. Setup: installs it like a normal program. Windows may say the publisher is unknown, because the app is not signed."
