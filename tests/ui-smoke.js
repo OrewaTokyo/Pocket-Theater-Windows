@@ -32,13 +32,19 @@ let step = 0;
   page.on('console', (msg) => { if (msg.type() === 'error') problems.push('console: ' + msg.text()); });
 
   const opened = [];
+  const fakeMpc = path.join(tmp, 'MPC-HC', 'mpc-hc64.exe');
+  const fakePot = path.join(tmp, 'PotPlayer', 'PotPlayerMini64.exe');
+  for (const f of [fakeMpc, fakePot]) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, ''); }
   const launches = [];
   handlers = createHandlers({
     store, proxy,
     dialog: { showSaveDialog: async () => ({ canceled: false, filePath: path.join(tmp, 'saved-by-ui.bin') }), showOpenDialog: async () => ({ canceled: true }) },
-    shell: { openPath: async (p) => { opened.push(p); return ''; }, showItemInFolder: () => {} },
+    shell: { openPath: async (p) => { opened.push(p); return ''; }, showItemInFolder: () => {}, openExternal: async () => {} },
     app: { getPath: () => tmp, getVersion: () => '0.1.0' },
-    players: { findVlc: () => null, launch: async (exe, url) => { launches.push(url); } },
+    players: {
+      detect: async () => [{ id: 'mpc-hc', name: 'MPC-HC', path: fakeMpc }, { id: 'potplayer', name: 'PotPlayer', path: fakePot }],
+      launch: async (exe, url) => { launches.push(url); },
+    },
     send: (channel, payload) => { page.evaluate(([c, p]) => window.__emit && window.__emit(c, p), [channel, payload]).catch(() => {}); },
     getWindow: () => null,
     tempDir: path.join(tmp, 'open'),
@@ -125,18 +131,31 @@ let step = 0;
   assert.ok(await page.evaluate(() => document.querySelector('video').duration > 5), 'the video has a length');
   await page.evaluate(() => { const v = document.querySelector('video'); v.pause(); v.currentTime = 1; Array.from(v.textTracks).forEach((t) => { t.mode = 'showing'; }); });
   await sleep(500);
+  await page.keyboard.press('i');
+  await page.locator('.info').waitFor();
+  await page.waitForFunction(() => /Buffered/.test(document.querySelector('.info').textContent));
+  assert.ok(/Looks healthy|Wi-Fi/.test(await page.locator('.info').innerText()), 'the info panel gives a verdict');
   await shot('video');
+  await page.keyboard.press('i');
+  await page.locator('.info').waitFor({ state: 'hidden' });
   await page.keyboard.press('Control+ArrowRight');
   await page.locator('.viewer-title:has-text("S01E02 - The Letter.webm")').waitFor();
   await page.keyboard.press('Escape');
   await page.locator('#viewer-root').waitFor({ state: 'hidden' });
 
-  console.log('Play in VLC with no player, runnable files, saving');
-  await page.locator('.ticket:has-text("S01E01") >> text=Play in VLC').click();
-  await text('No outside player found').waitFor();
-  await shot('no-player');
-  await page.click('.modal button:has-text("Close")');
-  assert.strictEqual(launches.length, 0);
+  console.log('Play in a player: the installed players are listed, the choice is remembered');
+  await page.locator('.ticket:has-text("S01E01") >> text=Play in player').click();
+  await text('Choose a video player').waitFor();
+  await text('MPC-HC').first().waitFor();
+  await shot('player-list');
+  await page.click('.choice:has-text("MPC-HC")');
+  await page.locator('.toast:has-text("Opened in MPC-HC")').waitFor();
+  assert.strictEqual(launches.length, 1);
+  assert.ok(launches[0].startsWith(proxy.base + '/file?lib=lib-detectives'));
+  await page.locator('.ticket:has-text("S01E01") >> text=Play in player').click();
+  await page.waitForFunction(() => document.querySelectorAll('.toast').length >= 2);
+  assert.strictEqual(launches.length, 2, 'the remembered player is used without asking again');
+  assert.strictEqual(await page.locator('.modal').count(), 0);
 
   await page.goto(page.url().replace(/#.*/, '') + '#/lib/lib-games');
   await page.locator('.ticket:has-text("setup.exe")').waitFor();

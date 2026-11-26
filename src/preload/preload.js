@@ -9,7 +9,8 @@ const REQUESTS = [
   'session:login', 'session:register', 'session:logout', 'session:me', 'session:password',
   'api:get', 'api:post', 'legal:get', 'pair:qr', 'monitor:fast', 'media:base',
   'file:save', 'file:open', 'file:cancel', 'file:reveal',
-  'player:info', 'player:launch', 'player:choose',
+  'player:info', 'player:list', 'player:launch', 'player:set', 'player:forget', 'player:choose',
+  'media:stats', 'app:openHelp',
 ];
 const EVENTS = ['conn:status', 'conn:signed-out', 'download:progress'];
 

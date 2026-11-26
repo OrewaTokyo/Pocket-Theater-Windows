@@ -61,6 +61,30 @@ function createHandlers(ctx) {
     return { lib, parts, name: parts[parts.length - 1] };
   }
 
+  // ---- video players on this PC ----
+  const allowedPlayers = new Set();
+  let playerCache = { at: 0, list: [] };
+
+  async function detectPlayers(fresh) {
+    if (!fresh && Date.now() - playerCache.at < 30000) return playerCache.list;
+    const list = await ctx.players.detect();
+    playerCache = { at: Date.now(), list };
+    list.forEach((p) => allowedPlayers.add(p.path));
+    return list;
+  }
+
+  function savedPlayer() {
+    const saved = ctx.store.settings().externalPlayer;
+    if (!saved || !fs.existsSync(saved)) return null;
+    allowedPlayers.add(saved);
+    return saved;
+  }
+
+  function playerName(exe) {
+    const known = playerCache.list.find((p) => p.path === exe);
+    return known ? known.name : path.basename(exe).replace(/\.exe$/i, '');
+  }
+
   function startDownload(conn, lib, parts, destPath, open) {
     const name = parts[parts.length - 1];
     const id = randomId(6);
@@ -290,21 +314,42 @@ function createHandlers(ctx) {
     },
 
     // ---- outside players ----
+    // The app hands the player a link on this PC (never the phone's own address). Which programs may be used:
+    // the ones found on this PC, plus one the person picked with the file chooser.
     'player:info': async () => {
-      const chosen = ctx.store.settings().externalPlayer;
-      const exe = chosen && fs.existsSync(chosen) ? chosen : ctx.players.findVlc();
-      return { player: exe ? path.basename(exe) : null };
+      const saved = savedPlayer();
+      const list = await detectPlayers(false);
+      const chosen = saved || (list.find((p) => p.id === 'vlc') || {}).path || null;
+      return { player: chosen ? playerName(chosen) : null, saved: !!saved };
     },
+
+    'player:list': async () => ({ players: await detectPlayers(true), saved: savedPlayer() }),
 
     'player:launch': async (args) => {
       need();
       const { lib, parts } = fileArgs(args);
-      const chosen = ctx.store.settings().externalPlayer;
-      const exe = chosen && fs.existsSync(chosen) ? chosen : ctx.players.findVlc();
-      if (!exe) throw new AppError('No outside player found. Install VLC, or choose a player.', 'NO_PLAYER');
+      await detectPlayers(false);
+      let exe = null;
+      if (args.playerPath) {
+        if (!allowedPlayers.has(args.playerPath) || !fs.existsSync(args.playerPath)) throw new AppError('That player is not available.', 'BAD_REQUEST');
+        exe = args.playerPath;
+        if (args.remember) ctx.store.setSettings({ externalPlayer: exe });
+      } else {
+        exe = savedPlayer() || (playerCache.list.find((p) => p.id === 'vlc') || {}).path || null;
+      }
+      if (!exe) throw new AppError('No video player is chosen yet.', 'NO_PLAYER');
       await ctx.players.launch(exe, ctx.proxy.base + '/file?' + fileQuery(lib, parts));
-      return { player: path.basename(exe) };
+      return { player: playerName(exe) };
     },
+
+    'player:set': async (args) => {
+      const exe = args && args.path;
+      if (!exe || !allowedPlayers.has(exe) || !fs.existsSync(exe)) throw new AppError('That player is not available.', 'BAD_REQUEST');
+      ctx.store.setSettings({ externalPlayer: exe });
+      return { player: playerName(exe) };
+    },
+
+    'player:forget': async () => { ctx.store.setSettings({ externalPlayer: null }); return true; },
 
     'player:choose': async () => {
       const result = await ctx.dialog.showOpenDialog(ctx.getWindow(), {
@@ -315,8 +360,16 @@ function createHandlers(ctx) {
       if (result.canceled || !result.filePaths || !result.filePaths[0]) return { canceled: true };
       const exe = result.filePaths[0];
       if (!/\.exe$/i.test(exe)) throw new AppError('Pick a program (an .exe file).', 'BAD_REQUEST');
-      ctx.store.setSettings({ externalPlayer: exe });
-      return { player: path.basename(exe) };
+      allowedPlayers.add(exe);
+      return { path: exe, name: playerName(exe) };
+    },
+
+    'media:stats': async () => ctx.proxy.stats(),
+
+    'app:openHelp': async (which) => {
+      if (which !== 'vlc') throw new AppError('Unknown page.', 'BAD_REQUEST');
+      await ctx.shell.openExternal('https://www.videolan.org/vlc/');
+      return true;
     },
   };
 

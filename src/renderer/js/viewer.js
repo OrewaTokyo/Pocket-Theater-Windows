@@ -49,6 +49,7 @@ PT.viewer = (function () {
   }
 
   function stopMedia() {
+    if (state && state.stopInfo) state.stopInfo();
     const media = root().querySelector('video, audio');
     if (media) { saveProgress(media, true); media.pause(); media.removeAttribute('src'); media.load(); }
     if (state && state.unsubBack) state.unsubBack();
@@ -83,6 +84,7 @@ PT.viewer = (function () {
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
     if ((event.ctrlKey && event.key === 'ArrowRight') || (event.key === 'ArrowRight' && state.kind === 'image')) { event.preventDefault(); go(1); }
     else if ((event.ctrlKey && event.key === 'ArrowLeft') || (event.key === 'ArrowLeft' && state.kind === 'image')) { event.preventDefault(); go(-1); }
+    else if (event.key.toLowerCase() === 'i' && !event.ctrlKey && !event.altKey && state.toggleInfo) { event.preventDefault(); state.toggleInfo(); }
     else if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.altKey) {
       const stage = root().querySelector('.stage');
       if (!stage) return;
@@ -97,6 +99,8 @@ PT.viewer = (function () {
     const entry = state.entries[state.index];
     const kind = PT.util.kind(entry);
     state.kind = kind;
+    state.toggleInfo = null;
+    state.stopInfo = null;
     const entryParts = state.parts.concat(entry.name);
     const stage = el('div', { class: 'stage' });
     const side = [];
@@ -104,7 +108,10 @@ PT.viewer = (function () {
     const prev = el('button', { class: 'ghost small', type: 'button', text: '\u2039 Previous', disabled: state.index === 0, onclick: () => go(-1), title: 'Previous (Ctrl+Left)' });
     const next = el('button', { class: 'ghost small', type: 'button', text: 'Next \u203A', disabled: state.index === state.entries.length - 1, onclick: () => go(1), title: 'Next (Ctrl+Right)' });
     if (kind === 'video' || kind === 'audio') {
-      side.push(el('button', { class: 'ghost small', type: 'button', text: 'Play in VLC', title: 'Play in an outside player', onclick: () => PT.files.playOutside(state.lib, entryParts) }));
+      side.push(el('button', { class: 'ghost small', type: 'button', text: PT.files.playLabel(), title: PT.files.playHint(), onclick: () => PT.files.playOutside(state.lib, entryParts) }));
+    }
+    if (kind === 'video' || kind === 'audio') {
+      side.push(el('button', { class: 'ghost small', type: 'button', text: 'Info', title: 'Playback details (I)', onclick: () => state.toggleInfo && state.toggleInfo() }));
     }
     side.push(el('button', { class: 'ghost small', type: 'button', text: 'Save', onclick: () => PT.files.save(state.lib, entryParts) }));
     if (kind === 'pdf' || kind === 'image') {
@@ -139,7 +146,7 @@ PT.viewer = (function () {
 
   function problem(message, name, entryParts, hint) {
     const buttons = [
-      el('button', { class: 'go', type: 'button', text: 'Play in VLC', onclick: () => PT.files.playOutside(state.lib, entryParts) }),
+      el('button', { class: 'go', type: 'button', text: PT.files.playLabel(), onclick: () => PT.files.playOutside(state.lib, entryParts) }),
       el('button', { class: 'ghost', type: 'button', text: 'Open in Windows', onclick: () => PT.files.openDefault(state.lib, entryParts) }),
       el('button', { class: 'ghost', type: 'button', text: 'Save', onclick: () => PT.files.save(state.lib, entryParts) }),
     ];
@@ -214,7 +221,7 @@ PT.viewer = (function () {
       stage.replaceChildren(problem(
         code === 4 ? 'Windows can\u2019t play this kind of video here.' : 'This could not be played.',
         entry.name, entryParts,
-        code === 4 ? 'VLC plays almost everything. If it is installed, use the button below.' : 'Check the connection to the phone and try again.'
+        code === 4 ? 'A video player such as VLC plays almost everything. Use the button below.' : 'Check the connection to the phone and try again.'
       ));
     });
 
@@ -233,10 +240,49 @@ PT.viewer = (function () {
       }, { once: true });
     }
 
+    // Playback details: tells apart "the Wi-Fi is too slow", "this PC can't keep up" and "the connection dropped".
+    const info = el('pre', { class: 'info', hidden: true });
+    let infoTimer = null;
+    const refreshInfo = async () => {
+      let net = null;
+      try { net = await PT.call('media:stats'); } catch (err) { /* shown without the link numbers */ }
+      if (!state || info.hidden) return;
+      const mb = (n) => (n / 1048576).toFixed(1) + ' MB/s';
+      const ahead = (() => {
+        for (let i = 0; i < media.buffered.length; i++) {
+          if (media.currentTime >= media.buffered.start(i) && media.currentTime <= media.buffered.end(i)) return media.buffered.end(i) - media.currentTime;
+        }
+        return 0;
+      })();
+      const needs = entry.size > 0 && media.duration > 0 ? entry.size / media.duration : 0;
+      const speed = net ? net.bytesPerSecond : null;
+      const q = kind === 'video' && media.getVideoPlaybackQuality ? media.getVideoPlaybackQuality() : null;
+      const lines = [];
+      if (kind === 'video' && media.videoWidth) lines.push('Picture:       ' + media.videoWidth + ' \u00D7 ' + media.videoHeight);
+      if (needs) lines.push('Video needs:   ' + mb(needs) + '  (' + Math.round((needs * 8) / 1e6) + ' Mbit/s)');
+      lines.push('From phone:    ' + (speed === null ? 'idle (buffer is full or paused)' : mb(speed) + '  (' + Math.round((speed * 8) / 1e6) + ' Mbit/s)'));
+      lines.push('Buffered:      ' + Math.round(ahead) + ' s ahead');
+      if (q) lines.push('Dropped:       ' + q.droppedVideoFrames + ' of ' + q.totalVideoFrames + ' frames');
+      if (net) lines.push('Reconnects:    ' + net.reconnects);
+      let verdict = 'Looks healthy.';
+      if (speed !== null && needs && speed < needs * 1.15 && ahead < 20) verdict = 'The Wi-Fi is sending slower than this video needs. Move closer to the router, or use the 5 GHz network.';
+      else if (q && q.totalVideoFrames > 300 && q.droppedVideoFrames / q.totalVideoFrames > 0.02) verdict = 'This PC is dropping frames. Try Play in player: it can use the graphics card better for big videos.';
+      else if (net && net.reconnects > 0) verdict = 'The phone dropped the connection ' + net.reconnects + (net.reconnects === 1 ? ' time' : ' times') + ', and the app recovered each time.';
+      lines.push('', verdict);
+      info.textContent = lines.join('\n');
+    };
+    state.toggleInfo = () => {
+      info.hidden = !info.hidden;
+      clearInterval(infoTimer);
+      if (!info.hidden) { refreshInfo(); infoTimer = setInterval(refreshInfo, 1000); }
+    };
+    state.stopInfo = () => clearInterval(infoTimer);
+
     const wrap = el('div', { class: 'player-wrap' }, [
       kind === 'audio' ? el('div', { class: 'audio-art', text: '\u{1F3A7}' }) : null,
       media,
       status,
+      info,
     ]);
     const autoNext = el('input', { type: 'checkbox', id: 'autonext', checked: readFlag(autoNextKey, '1') === '1' });
     autoNext.addEventListener('change', () => writeFlag(autoNextKey, autoNext.checked ? '1' : '0'));

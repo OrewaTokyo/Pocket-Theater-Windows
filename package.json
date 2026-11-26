@@ -1,7 +1,7 @@
 {
   "name": "pocket-theater-windows",
   "productName": "Pocket Theater",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Windows app for Pocket Theater: browse and play the folders your phone shares, from your PC.",
   "main": "src/main/main.js",
   "author": "Pocket Theater",

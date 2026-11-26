@@ -165,6 +165,7 @@ PT.shell = (function () {
       window.addEventListener('hashchange', route);
       loadShelves();
       route();
+      PT.files.refreshPlayer(); // in the background: only used for tooltips and the Account page
     },
     leave() {
       if (!active) return;

@@ -13,6 +13,7 @@ const { Store } = require('../src/main/store');
 const { createHandlers } = require('../src/main/handlers');
 const { probeCertificate } = require('../src/main/tls-trust');
 const util = require('../src/main/util');
+const players = require('../src/main/players');
 
 let passed = 0;
 const failures = [];
@@ -67,6 +68,21 @@ function get(url, headers) {
     assert.ok(util.sameFingerprint('AB:CD:EF', 'abcdef'));
     assert.ok(!util.sameFingerprint('AB:CD:EF', 'abcdee'));
     assert.ok(!util.sameFingerprint('', ''));
+  });
+
+  await test('player detection finds installed players in the usual places and through the registry', async () => {
+    const mk = (f) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, ''); return f; };
+    const pf = path.join(tmp, 'pf');
+    mk(path.join(pf, 'VideoLAN', 'VLC', 'vlc.exe'));
+    mk(path.join(pf, 'MPC-HC', 'mpc-hc64.exe'));
+    const odd = mk(path.join(tmp, 'Weird', 'PotPlayerMini64.exe'));
+    const found = await players.detect({ env: { ProgramFiles: pf }, registry: async (exe) => (exe === 'PotPlayerMini64.exe' ? odd : null) });
+    assert.deepStrictEqual(found.map((p) => p.name).sort(), ['MPC-HC', 'PotPlayer', 'VLC']);
+    assert.deepStrictEqual(await players.detect({ env: { ProgramFiles: path.join(tmp, 'empty') }, registry: async () => null }), []);
+    assert.deepStrictEqual(await players.detect({ env: { ProgramFiles: pf }, registry: async () => path.join(tmp, 'gone.exe') }).then((l) => l.map((p) => p.name).sort()), ['MPC-HC', 'VLC'], 'a registry entry for a program that is gone is ignored');
+    assert.strictEqual(players.parseRegistryValue('    (Default)    REG_SZ    C:\\Program Files\\VideoLAN\\VLC\\vlc.exe\r\n', {}), 'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe');
+    assert.strictEqual(players.parseRegistryValue('(Default)  REG_EXPAND_SZ  "%ProgramFiles%\\x\\p.exe"', { ProgramFiles: 'C:\\PF' }), 'C:\\PF\\x\\p.exe');
+    assert.strictEqual(players.parseRegistryValue('nothing here', {}), null);
   });
 
   console.log('\nStore');
@@ -228,6 +244,50 @@ function get(url, headers) {
     current.remember({ username: 'demo', password: 'theater-demo-1' });
     assert.strictEqual((await get(fileUrl(), { Range: 'bytes=0-9' })).status, 206);
   });
+  await test('proxy carries on by itself when the phone drops the connection part-way', async () => {
+    const before = proxy.stats().reconnects;
+    phone.state.dropsLeft = 0;
+    const clean = await get(fileUrl());
+    phone.state.dropFileAfter = 200000;
+    phone.state.dropsLeft = 3;
+    const whole = await get(fileUrl());
+    assert.strictEqual(whole.status, 200);
+    assert.ok(whole.body.equals(clean.body), 'not a byte lost or repeated after three drops');
+    assert.ok(proxy.stats().reconnects - before >= 3, 'the drops were recovered from');
+    phone.state.dropsLeft = 2;
+    const part = await get(fileUrl(), { Range: 'bytes=1000-1999999' });
+    assert.strictEqual(part.status, 206);
+    assert.ok(part.body.equals(clean.body.subarray(1000, 2000000)), 'a ranged request survives drops too');
+    phone.state.dropFileAfter = 0;
+    phone.state.dropsLeft = 0;
+  });
+  await test('proxy gives up cleanly when the phone is gone for good', async () => {
+    const doomed = await startMockPhone({ certFile: certs.certFile, keyFile: certs.keyFile });
+    const link = new Connection({ scheme: 'https', host: '127.0.0.1', port: doomed.port, fingerprint: probe.fingerprint });
+    await link.login('demo', 'theater-demo-1');
+    doomed.state.dropFileAfter = 100000;
+    doomed.state.dropsLeft = 1;
+    const quick = await startProxy(() => link, { readAheadBytes: 1024 * 1024, maxResumes: 3, retryDelayMs: 20 });
+    const outcome = await new Promise((resolve) => {
+      let n = 0;
+      http.get(quick.base + '/file?lib=lib-games&path=save-data.bin', (res) => {
+        res.on('data', (c) => { n += c.length; if (n >= 100000) doomed.close(); });
+        res.on('end', () => resolve({ n, complete: res.complete }));
+        res.on('error', () => resolve({ n, complete: false }));
+        res.on('aborted', () => resolve({ n, complete: false }));
+        res.on('close', () => resolve({ n, complete: res.complete }));
+      }).on('error', () => resolve({ n, complete: false }));
+    });
+    assert.strictEqual(outcome.complete, false, 'the player is told the file is broken, not silently shortened');
+    assert.ok(outcome.n >= 100000 && outcome.n < 3 * 1024 * 1024);
+    link.close();
+    await quick.close();
+  });
+  await test('proxy stats report speed and reconnects', () => {
+    const stats = proxy.stats();
+    assert.ok(stats.bytesPerSecond === null || stats.bytesPerSecond > 0);
+    assert.ok(Number.isInteger(stats.reconnects) && stats.reconnects >= 3);
+  });
   current.close();
 
   console.log('\nHandlers (what the window asks for)');
@@ -235,15 +295,22 @@ function get(url, headers) {
   const fakeDialog = { savePath: null, showSaveDialog: async () => (fakeDialog.savePath ? { canceled: false, filePath: fakeDialog.savePath } : { canceled: true }), showOpenDialog: async () => ({ canceled: true }) };
   const opened = [];
   const revealed = [];
+  const visited = [];
   const secrets = { available: () => true, encrypt: (t) => Buffer.from(t).reverse(), decrypt: (b) => Buffer.from(b).reverse().toString() };
   const store = new Store(path.join(tmp, 'app'), secrets);
   const launches = [];
+  const fakeVlc = path.join(tmp, 'VLC', 'vlc.exe');
+  const fakeMpc = path.join(tmp, 'MPC-HC', 'mpc-hc64.exe');
+  const browsed = path.join(tmp, 'Other', 'PotPlayerMini64.exe');
+  const custom = path.join(tmp, 'Other', 'cool-player.exe');
+  for (const f of [fakeVlc, fakeMpc, browsed, custom]) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, ''); }
+  let detected = [{ id: 'vlc', name: 'VLC', path: fakeVlc }, { id: 'mpc-hc', name: 'MPC-HC', path: fakeMpc }];
   const handlers = createHandlers({
     store, proxy,
     dialog: fakeDialog,
-    shell: { openPath: async (p) => { opened.push(p); return ''; }, showItemInFolder: (p) => { revealed.push(p); } },
+    shell: { openPath: async (p) => { opened.push(p); return ''; }, showItemInFolder: (p) => { revealed.push(p); }, openExternal: async (u) => { visited.push(u); } },
     app: { getPath: () => tmp, getVersion: () => '0.1.0' },
-    players: { findVlc: () => path.join(os.tmpdir(), 'fake', 'vlc.exe'), launch: async (exe, url) => { launches.push({ exe, url }); } },
+    players: { detect: async () => detected, launch: async (exe, url) => { launches.push({ exe, url }); } },
     send: (channel, payload) => events.push({ channel, payload }),
     getWindow: () => null,
     tempDir: path.join(tmp, 'open'),
@@ -300,6 +367,8 @@ function get(url, headers) {
     await assert.rejects(() => call('session:register', { username: 'newbie2', password: 'newbie-pass-1', agree: false }), (e) => /accept/.test(e.message));
   });
   await test('download saves the whole file and reports progress', async () => {
+    phone.state.dropFileAfter = 0;
+    phone.state.dropsLeft = 0;
     const dest = path.join(tmp, 'saved.bin');
     fakeDialog.savePath = dest;
     events.length = 0;
@@ -312,7 +381,7 @@ function get(url, headers) {
   });
   await test('the preload lets through exactly the requests the engine answers', () => {
     const text = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8');
-    const listed = [...text.slice(text.indexOf('const REQUESTS'), text.indexOf('];')).matchAll(/'([a-z]+:[a-z]+)'/g)].map((m) => m[1]).sort();
+    const listed = [...text.slice(text.indexOf('const REQUESTS'), text.indexOf('];')).matchAll(/'([a-z]+:[A-Za-z]+)'/g)].map((m) => m[1]).sort();
     assert.deepStrictEqual(listed, handlers.channels.slice().sort());
   });
   await test('Show in folder only works for files this app saved', async () => {
@@ -324,6 +393,20 @@ function get(url, headers) {
     await call('file:reveal', started.id);
     assert.deepStrictEqual(revealed, [dest]);
     await assert.rejects(() => call('file:reveal', 'not-an-id'), (e) => e.code === 'NOT_FOUND');
+    fakeDialog.savePath = null;
+  });
+  await test('a download survives the phone dropping the connection', async () => {
+    const dest = path.join(tmp, 'resumed.bin');
+    fakeDialog.savePath = dest;
+    phone.state.dropFileAfter = 300000;
+    phone.state.dropsLeft = 4;
+    events.length = 0;
+    const started = await call('file:save', { lib: 'lib-games', parts: ['save-data.bin'] });
+    await waitFor(() => events.some((e) => e.payload && e.payload.id === started.id && (e.payload.state === 'done' || e.payload.state === 'error')), 15000);
+    assert.strictEqual(events.filter((e) => e.payload && e.payload.id === started.id).pop().payload.state, 'done');
+    assert.ok(fs.readFileSync(dest).equals(fs.readFileSync(path.join(tmp, 'saved.bin'))), 'the saved file is identical, not a byte lost or repeated');
+    phone.state.dropFileAfter = 0;
+    phone.state.dropsLeft = 0;
     fakeDialog.savePath = null;
   });
   await test('opening with the default app downloads to a temp folder first; programs are never opened', async () => {
@@ -348,10 +431,48 @@ function get(url, headers) {
   });
   await test('outside player gets a link to the local proxy, never a phone address', async () => {
     const r = await call('player:launch', { lib: 'lib-movies', parts: ['Tiny Cinema (2024).webm'] });
-    assert.strictEqual(r.player, 'vlc.exe');
+    assert.strictEqual(r.player, 'VLC', 'VLC is used when it is installed and nothing else is chosen');
+    assert.strictEqual(launches[0].exe, fakeVlc);
     assert.ok(launches[0].url.startsWith(proxy.base + '/file?lib=lib-movies&path='));
     assert.ok(!launches[0].url.includes(String(phone.port)));
     await assert.rejects(() => call('player:launch', { lib: 'x', parts: [] }), (e) => e.code === 'BAD_REQUEST');
+  });
+  await test('player list, choose, remember and forget', async () => {
+    detected = [{ id: 'mpc-hc', name: 'MPC-HC', path: fakeMpc }, { id: 'potplayer', name: 'PotPlayer', path: browsed }]; // this PC has no VLC
+    const listed = await call('player:list');
+    assert.deepStrictEqual(listed.players.map((p) => p.name), ['MPC-HC', 'PotPlayer']);
+    assert.strictEqual(listed.saved, null);
+    await assert.rejects(() => call('player:launch', { lib: 'lib-movies', parts: ['Tiny Cinema (2024).webm'] }), (e) => e.code === 'NO_PLAYER');
+    await assert.rejects(() => call('player:launch', { lib: 'lib-movies', parts: ['x.webm'], playerPath: path.join(tmp, 'not-listed.exe') }), (e) => e.code === 'BAD_REQUEST');
+    launches.length = 0;
+    const r = await call('player:launch', { lib: 'lib-movies', parts: ['Tiny Cinema (2024).webm'], playerPath: fakeMpc, remember: true });
+    assert.strictEqual(r.player, 'MPC-HC');
+    assert.strictEqual(launches[0].exe, fakeMpc);
+    assert.strictEqual((await call('player:info')).saved, true);
+    launches.length = 0;
+    await call('player:launch', { lib: 'lib-movies', parts: ['Tiny Cinema (2024).webm'] });
+    assert.strictEqual(launches[0].exe, fakeMpc, 'the remembered player is used without asking');
+    await call('player:forget');
+    assert.strictEqual((await call('player:info')).saved, false);
+  });
+  await test('a player picked with the file chooser is allowed, and a non-program is refused', async () => {
+    fakeDialog.openPath = custom;
+    fakeDialog.showOpenDialog = async () => ({ canceled: false, filePaths: [fakeDialog.openPath] });
+    const picked = await call('player:choose');
+    assert.strictEqual(picked.path, custom);
+    assert.strictEqual(picked.name, 'cool-player');
+    const r = await call('player:launch', { lib: 'lib-movies', parts: ['Tiny Cinema (2024).webm'], playerPath: custom });
+    assert.strictEqual(r.player, 'cool-player');
+    fakeDialog.openPath = path.join(tmp, 'readme.txt');
+    await assert.rejects(() => call('player:choose'), (e) => e.code === 'BAD_REQUEST');
+    await call('player:set', { path: custom });
+    assert.strictEqual((await call('player:info')).player, 'cool-player');
+    await call('player:forget');
+  });
+  await test('the VLC download page can be opened, nothing else', async () => {
+    await call('app:openHelp', 'vlc');
+    assert.deepStrictEqual(visited, ['https://www.videolan.org/vlc/']);
+    await assert.rejects(() => call('app:openHelp', 'https://evil.example'), (e) => e.code === 'BAD_REQUEST');
   });
   await test('admin: pairing code, QR, and the admin page open after the phone approves', async () => {
     await assert.rejects(() => call('api:get', '/api/admin/overview'), (e) => /Admin access is not open/.test(e.message));

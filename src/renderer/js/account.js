@@ -7,12 +7,13 @@ PT.pages.account = async function (main) {
 
   let remembered = false;
   let player = null;
+  let savedPlayer = false;
   try {
     const phones = await PT.call('servers:list');
     const mine = phones.find((p) => p.id === server.id);
     remembered = !!(mine && mine.remembered);
   } catch (err) { /* shown as "no" */ }
-  try { player = (await PT.call('player:info')).player; } catch (err) { /* shown as "none" */ }
+  try { const info = await PT.call('player:info'); player = info.player; savedPlayer = info.saved; } catch (err) { /* shown as "none" */ }
   if (!document.getElementById('main') || location.hash.indexOf('#/account') !== 0) return;
 
   // ---- change password ----
@@ -56,10 +57,12 @@ PT.pages.account = async function (main) {
     PT.views.phones();
   };
   const choosePlayer = async () => {
-    try {
-      const picked = await PT.call('player:choose');
-      if (picked.player) { PT.toast('Using ' + picked.player); PT.shell.route(); }
-    } catch (err) { PT.toast(err.message, 'error'); }
+    if (await PT.files.chooseDefaultPlayer()) PT.shell.route();
+  };
+  const askEachTime = async () => {
+    await PT.call('player:forget').catch(() => {});
+    await PT.files.refreshPlayer();
+    PT.shell.route();
   };
 
   const fingerprint = server.secure && server.fingerprint
@@ -86,10 +89,15 @@ PT.pages.account = async function (main) {
       ]),
     ]),
     el('section', { class: 'panel' }, [
-      el('h2', { text: 'Outside player' }),
-      el('p', {}, [el('strong', { text: player || 'None found' })]),
-      el('p', { class: 'note', text: 'Used by Play in VLC for videos Windows can\u2019t play by itself.' }),
-      el('div', { class: 'row-actions' }, [el('button', { class: 'ghost', type: 'button', text: 'Choose a player\u2026', onclick: choosePlayer })]),
+      el('h2', { text: 'Video player' }),
+      el('p', {}, [el('strong', { text: player || 'None chosen' })]),
+      el('p', { class: 'note', text: savedPlayer
+        ? 'Used by Play in player for videos this app can\u2019t play by itself.'
+        : (player ? 'Found automatically. Used by Play in player for videos this app can\u2019t play by itself.' : 'Play in player will list the video players installed on this PC.') }),
+      el('div', { class: 'row-actions' }, [
+        el('button', { class: 'ghost', type: 'button', text: 'Choose a player\u2026', onclick: choosePlayer }),
+        savedPlayer ? el('button', { class: 'ghost', type: 'button', text: 'Back to automatic', onclick: askEachTime }) : null,
+      ]),
     ]),
     el('p', { class: 'note about', text: 'Pocket Theater for Windows ' + ((PT.state.info && PT.state.info.version) || '') })
   );

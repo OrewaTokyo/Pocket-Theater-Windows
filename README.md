@@ -5,7 +5,7 @@ website does (browse the shared folders, play videos with subtitles, view pictur
 access, open the admin page), and adds what a website cannot do. The phone does not change: this app talks to the
 same server the website uses.
 
-**Status: prototype (0.1).** It has the website's features plus the extras below. It has not been run on a real
+**Status: prototype (0.2).** It has the website's features plus the extras below. It has not been run on a real
 Windows PC yet, only tested against a pretend phone (see Tests).
 
 ## What the app adds over the website
@@ -15,12 +15,13 @@ Windows PC yet, only tested against a pretend phone (see Tests).
 | Certificate warning on every browser | yes | **never**: the app remembers the phone's exact certificate |
 | Signing in | each time the session ends | **stays signed in** (password stored with Windows' own encryption) and signs in again by itself |
 | Several phones | one address per tab | a saved list of phones |
-| Videos the browser can't play (HEVC, many MKV/AC3) | stuck | **Play in VLC** (or any player you choose) |
+| Videos the browser can't play (HEVC, many MKV/AC3) | stuck | **Play in player**: finds VLC, MPC-HC, PotPlayer, mpv and others installed on the PC and lists them (or browse for one) |
 | Saving files | browser downloads | save dialog, progress, cancel, "Show in folder" |
 | Documents and other files | download only | **Open in Windows** (uses the program Windows picks) |
 | Continue where you stopped | no | yes, and "Continue watching" on the home page |
 | Next episode | no | plays the next one automatically |
-| Connection drops | page breaks | banner, then playback resumes from the same second |
+| Connection drops | page breaks | the app asks the phone for the rest from the same byte, so playback and downloads carry on; a banner shows only if the phone is really gone |
+| Smooth playback | none | a 96 MB read-ahead buffer absorbs Wi-Fi dips; press **I** in the viewer for details (Wi-Fi speed vs what the video needs, buffer, dropped frames) |
 
 ## How it connects
 
@@ -47,8 +48,8 @@ Everything is built by GitHub, the same way as the Android app.
    - `.github/workflows/build-windows.yml`
 3. Upload `app.zip` to the root of the repository. It is unpacked automatically and the build starts.
 4. After a few minutes the **Releases** page has two programs:
-   - `PocketTheater-Portable-0.1.0.exe`: one file, runs without installing.
-   - `PocketTheater-Setup-0.1.0.exe`: installs like a normal program.
+   - `PocketTheater-Portable-0.2.0.exe`: one file, runs without installing.
+   - `PocketTheater-Setup-0.2.0.exe`: installs like a normal program.
 
 Windows may say "unknown publisher" the first time, because the app is not signed with a paid certificate.
 Choose More info, then Run anyway.
@@ -75,9 +76,9 @@ tests/           run-tests.js (engine), ui-smoke.js (whole window, needs Playwri
 
 ## Tests
 
-`npm test` runs 38 checks of the engine against a pretend phone that speaks the same web API: certificate
+`npm test` runs 46 checks of the engine against a pretend phone that speaks the same web API: certificate
 pinning (an impostor with another certificate gets no request at all), sign-in, automatic re-sign-in, Range
-streaming, downloads, cancelling, the connection monitor, admin pairing, and safety rules.
+streaming, recovery from dropped connections (playback and downloads), cancelling, finding installed players, the connection monitor, admin pairing, and safety rules.
 `node tests/ui-smoke.js` drives the real window in a headless browser and saves screenshots.
 
 ## Next steps

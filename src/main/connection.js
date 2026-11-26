@@ -49,6 +49,7 @@ class Connection extends EventEmitter {
     this.signedOutSent = false;
     this._reauthPromise = null;
     this._lastReauthFailure = 0;
+    this.lastActivity = 0;       // when data last arrived for a video or file, so heavy streaming is not mistaken for a lost phone
     this.agent = this.secure ? this._pinnedAgent() : new http.Agent({ keepAlive: true, maxSockets: 32 });
   }
 
@@ -220,6 +221,15 @@ class Connection extends EventEmitter {
     this.fast = !!on;
   }
 
+  /** The proxy calls this whenever data arrives from the phone. */
+  noteActivity() {
+    this.lastActivity = Date.now();
+  }
+
+  _streaming() {
+    return Date.now() - this.lastActivity < 8000;
+  }
+
   _delay() {
     if (this.online) return this.failures > 0 ? 1500 : this.fast ? 1500 : 3000;
     return Math.min(1500 + this.failures * 500, 6000);
@@ -231,13 +241,16 @@ class Connection extends EventEmitter {
     let reachable = true;
     let signedOut = false;
     try {
-      me = await this.json('GET', '/api/me', undefined, { timeout: 4000 });
+      // While a video is streaming the phone and the Wi-Fi are busy, so the status check is given longer to answer.
+      me = await this.json('GET', '/api/me', undefined, { timeout: this._streaming() ? 10000 : 4000 });
     } catch (err) {
       if (err.code === 'SIGNED_OUT') signedOut = true;
       else if (err.code === 'NETWORK' || err.code === 'CERT') reachable = false;
       // any other answer from the phone still means it is there
     }
     if (this.closed) return;
+    // Data is still arriving for a video, so the phone is obviously there, even if it was too busy to answer the check.
+    if (!reachable && this._streaming()) reachable = true;
     if (reachable) {
       this.failures = 0;
       this.online = true;

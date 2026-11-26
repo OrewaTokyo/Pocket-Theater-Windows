@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs');
-const { Transform, pipeline } = require('stream');
+const { Transform, PassThrough, pipeline } = require('stream');
+const { copyWithResume } = require('./resume');
 const { AppError, fromNetworkError } = require('./errors');
 const { readAll } = require('./connection');
 const { fileQuery } = require('./util');
@@ -20,7 +21,9 @@ async function downloadFile(connection, lib, parts, destPath, options) {
     throw new AppError(message, 'HTTP', res.statusCode);
   }
   const total = Number(res.headers['content-length']) || 0;
+  const upstream = '/file?' + fileQuery(lib, parts);
   const partPath = destPath + '.part';
+  const source = new PassThrough();
   let received = 0;
   let lastReport = 0;
   const counter = new Transform({
@@ -33,7 +36,17 @@ async function downloadFile(connection, lib, parts, destPath, options) {
   });
   try {
     await new Promise((resolve, reject) => {
-      pipeline(res, counter, fs.createWriteStream(partPath), (err) => (err ? reject(err) : resolve()));
+      pipeline(source, counter, fs.createWriteStream(partPath), (err) => (err ? reject(err) : resolve()));
+      // If the phone drops the connection part-way, the download carries on from the same byte.
+      const signal = opts.signal || new AbortController().signal;
+      copyWithResume({
+        connection, upstream, extraHeaders: {}, first: res, out: source, signal,
+        onBytes: () => { if (connection.noteActivity) connection.noteActivity(); },
+        maxResumes: opts.maxResumes, retryDelayMs: opts.retryDelayMs,
+      }).then(
+        () => { if (signal.aborted) source.destroy(new Error('aborted')); }, // cancelled: end the download instead of waiting forever
+        (err) => source.destroy(err)
+      );
     });
     if (total && received !== total) throw new AppError('The download stopped early. Try again.', 'NETWORK');
     fs.renameSync(partPath, destPath);

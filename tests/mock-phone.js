@@ -98,6 +98,8 @@ function startMockPhone(options) {
     requests: [],
     signupsOpen: opts.signupsOpen,
     adminPassword: 'admin-demo-1',
+    dropFileAfter: 0,
+    dropsLeft: 0,
     expireSessions() { state.sessions.clear(); },
     /** Pretends the phone scanned the code and the admin typed the password. */
     completePairing(code) {
@@ -213,18 +215,25 @@ function startMockPhone(options) {
       const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
       headers['Content-Type'] = mime;
       headers['Accept-Ranges'] = 'bytes';
+      let status = 200;
+      let body = data;
       if (range && pathname === '/file') {
-        let start = range[1] === '' ? total - parseInt(range[2], 10) : parseInt(range[1], 10);
-        let end = range[1] === '' || range[2] === '' ? total - 1 : Math.min(parseInt(range[2], 10), total - 1);
+        const start = range[1] === '' ? total - parseInt(range[2], 10) : parseInt(range[1], 10);
+        const end = range[1] === '' || range[2] === '' ? total - 1 : Math.min(parseInt(range[2], 10), total - 1);
         if (start > end || start >= total) { res.writeHead(416, { 'Content-Range': 'bytes */' + total }); return res.end(); }
         headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + total;
-        headers['Content-Length'] = end - start + 1;
-        res.writeHead(206, headers);
-        return res.end(data.subarray(start, end + 1));
+        status = 206;
+        body = data.subarray(start, end + 1);
       }
-      headers['Content-Length'] = total;
-      res.writeHead(200, headers);
-      return res.end(data);
+      headers['Content-Length'] = body.length;
+      res.writeHead(status, headers);
+      // Test switch: cut the connection part-way, like a Wi-Fi hiccup or a phone that gives up on a slow reader.
+      if (pathname === '/file' && state.dropFileAfter > 0 && state.dropsLeft > 0 && body.length > state.dropFileAfter * 2) {
+        state.dropsLeft--;
+        res.write(body.subarray(0, state.dropFileAfter));
+        return setTimeout(() => res.socket.destroy(), 30);
+      }
+      return res.end(body);
     }
     if (pathname === '/' || pathname === '/login.html') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<h1>Mock phone</h1>'); }
     return err(res, 404, 'Not found');

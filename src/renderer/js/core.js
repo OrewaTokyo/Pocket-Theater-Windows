@@ -127,34 +127,46 @@ PT.toast = function (text, kind) {
 
 /**
  * A dialog in the app's own look.
- * options: { title, body: [nodes], actions: [{ label, value, kind }] }  -> resolves with the chosen value (or null for Esc)
+ * options: {
+ *   title, body: [nodes],
+ *   choices: [{ label, sub, value }]   a vertical list of big buttons; picking one closes the dialog
+ *   check: { label, checked }          a tick box under the list; the answer then is { value, checked }
+ *   actions: [{ label, value, kind }]  buttons along the bottom
+ * }
+ * Resolves with the chosen value, or null for Esc / clicking outside.
  */
 PT.modal = function (options) {
   const el = PT.util.el;
   return new Promise((resolve) => {
     const root = document.getElementById('modal-root');
     const previous = document.activeElement;
+    const tick = options.check ? el('input', { type: 'checkbox', id: 'modal-check', checked: !!options.check.checked }) : null;
     const close = (value) => {
       document.removeEventListener('keydown', onKey, true);
       overlay.remove();
       if (previous && previous.focus) previous.focus();
-      resolve(value);
+      resolve(tick && value !== null ? { value, checked: tick.checked } : value);
     };
     const onKey = (event) => {
       if (event.key === 'Escape') { event.stopPropagation(); close(null); }
     };
-    const buttons = (options.actions || [{ label: 'OK', value: true, kind: 'go' }]).map((a) =>
-      el('button', { class: a.kind || 'ghost', type: 'button', text: a.label, onclick: () => close(a.value) }));
+    const actions = options.actions || (options.choices ? [{ label: 'Cancel', value: null, kind: 'ghost' }] : [{ label: 'OK', value: true, kind: 'go' }]);
+    const buttons = actions.map((a) => el('button', { class: a.kind || 'ghost', type: 'button', text: a.label, onclick: () => close(a.value) }));
+    const choices = (options.choices || []).map((c) => el('button', { class: 'choice', type: 'button', onclick: () => close(c.value) }, [
+      el('strong', { text: c.label }),
+      c.sub ? el('span', { class: 'note', text: c.sub }) : null,
+    ]));
     const dialog = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': options.title }, [
       el('h2', { text: options.title }),
-      el('div', { class: 'modal-body' }, options.body || []),
+      el('div', { class: 'modal-body' }, (options.body || []).concat(choices.length ? [el('div', { class: 'choices' }, choices)] : [])),
+      tick ? el('label', { class: 'check', for: 'modal-check' }, [tick, el('span', { text: options.check.label })]) : null,
       el('div', { class: 'modal-actions' }, buttons),
     ]);
     const overlay = el('div', { class: 'overlay' }, [dialog]);
     overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(null); });
     document.addEventListener('keydown', onKey, true);
     root.append(overlay);
-    const first = dialog.querySelector('button.go, button.danger') || buttons[buttons.length - 1];
+    const first = dialog.querySelector('button.choice, button.go, button.danger') || buttons[buttons.length - 1];
     if (first) first.focus();
   });
 };

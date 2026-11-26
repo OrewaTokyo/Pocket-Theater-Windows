@@ -145,7 +145,7 @@ PT.pages = PT.pages || {};
           const items = playlistOf(kind);
           PT.viewer.open({ lib: libId, parts, entries: items, index: items.indexOf(entry) });
         };
-        if (kind === 'video' || kind === 'audio') actions.push(small('Play in VLC', 'Play in an outside player such as VLC', () => PT.files.playOutside(libId, entryParts)));
+        if (kind === 'video' || kind === 'audio') actions.push(small(PT.files.playLabel(), PT.files.playHint(), () => PT.files.playOutside(libId, entryParts)));
         actions.push(small('Save', 'Save a copy to this PC', () => PT.files.save(libId, entryParts)));
       }
       const meta = kind === 'folder' ? 'Folder' : [PT.util.size(entry.size), entry.modified ? new Date(entry.modified).toLocaleDateString() : ''].filter(Boolean).join(' \u00B7 ');
