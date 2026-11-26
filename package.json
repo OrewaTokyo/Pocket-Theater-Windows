@@ -1,0 +1,41 @@
+{
+  "name": "pocket-theater-windows",
+  "productName": "Pocket Theater",
+  "version": "0.1.0",
+  "description": "Windows app for Pocket Theater: browse and play the folders your phone shares, from your PC.",
+  "main": "src/main/main.js",
+  "author": "Pocket Theater",
+  "license": "Apache-2.0",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/run-tests.js",
+    "mock": "node tests/mock-phone.js",
+    "dist": "electron-builder --win --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.11.3",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "com.pockettheater.windows",
+    "productName": "Pocket Theater",
+    "copyright": "Pocket Theater",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["src/**/*", "package.json"],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        { "target": "portable", "arch": ["x64"] },
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "portable": { "artifactName": "PocketTheater-Portable-${version}.${ext}" },
+    "nsis": {
+      "artifactName": "PocketTheater-Setup-${version}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  }
+}

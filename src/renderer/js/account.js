@@ -1,0 +1,96 @@
+PT.pages = PT.pages || {};
+
+PT.pages.account = async function (main) {
+  const el = PT.util.el;
+  const me = PT.state.me || {};
+  const server = PT.state.server || {};
+
+  let remembered = false;
+  let player = null;
+  try {
+    const phones = await PT.call('servers:list');
+    const mine = phones.find((p) => p.id === server.id);
+    remembered = !!(mine && mine.remembered);
+  } catch (err) { /* shown as "no" */ }
+  try { player = (await PT.call('player:info')).player; } catch (err) { /* shown as "none" */ }
+  if (!document.getElementById('main') || location.hash.indexOf('#/account') !== 0) return;
+
+  // ---- change password ----
+  const current = el('input', { type: 'password', id: 'cur', autocomplete: 'current-password', 'aria-label': 'Current password' });
+  const next = el('input', { type: 'password', id: 'new', autocomplete: 'new-password', 'aria-label': 'New password' });
+  const error = el('p', { class: 'error', role: 'alert', hidden: true });
+  const done = el('p', { class: 'notice ok', role: 'status', hidden: true, text: 'Password changed.' });
+  const save = el('button', { class: 'go', type: 'submit', text: 'Change password' });
+  const form = el('form', { class: 'stack', novalidate: true }, [
+    el('label', { for: 'cur', text: 'Current password' }), current,
+    el('label', { for: 'new', text: 'New password' }), next,
+    error, done,
+    el('div', { class: 'row-actions' }, [save]),
+  ]);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    done.hidden = true;
+    const problem = !current.value ? 'Type your current password.' : PT.util.passwordProblem(next.value, me.username);
+    if (problem) { error.textContent = problem; error.hidden = false; return; }
+    save.disabled = true;
+    try {
+      await PT.call('session:password', { current: current.value, next: next.value });
+      current.value = '';
+      next.value = '';
+      done.hidden = false;
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    }
+    save.disabled = false;
+  });
+
+  const signOut = async () => {
+    try { await PT.call('session:logout'); } catch (err) { /* leaving anyway */ }
+    PT.views.auth(PT.state.server, null);
+  };
+  const forget = async () => {
+    if (!(await PT.confirm('Remove ' + server.name + '?', 'The app forgets this phone and its saved sign-in. You can add it again later.', 'Remove', true))) return;
+    await PT.call('servers:remove', server.id).catch(() => {});
+    PT.views.phones();
+  };
+  const choosePlayer = async () => {
+    try {
+      const picked = await PT.call('player:choose');
+      if (picked.player) { PT.toast('Using ' + picked.player); PT.shell.route(); }
+    } catch (err) { PT.toast(err.message, 'error'); }
+  };
+
+  const fingerprint = server.secure && server.fingerprint
+    ? el('div', { class: 'fingerprint' }, PT.util.fingerprintLines(server.fingerprint).map((l) => el('div', { text: l })))
+    : null;
+
+  main.replaceChildren(
+    el('h1', { text: 'Account' }),
+    el('section', { class: 'panel' }, [
+      el('h2', { text: 'Signed in' }),
+      el('p', {}, [el('strong', { text: me.username || '' })]),
+      el('p', { class: 'note', text: remembered ? 'This PC keeps you signed in.' : 'This PC asks for your password each time you open the app.' }),
+      el('div', { class: 'row-actions' }, [el('button', { class: 'ghost', type: 'button', text: 'Sign out', onclick: signOut })]),
+    ]),
+    el('section', { class: 'panel' }, [el('h2', { text: 'Change password' }), form]),
+    el('section', { class: 'panel' }, [
+      el('h2', { text: 'This phone' }),
+      el('p', {}, [el('strong', { text: server.name || '' }), document.createTextNode(' \u00B7 ' + server.host + ':' + server.port)]),
+      el('p', { class: 'note', text: server.secure ? 'Secure connection. The app only talks to a phone that shows this exact certificate:' : 'Not encrypted. Your password and the files cross your network unprotected.' }),
+      fingerprint,
+      el('div', { class: 'row-actions' }, [
+        el('button', { class: 'ghost', type: 'button', text: 'Switch phone', onclick: async () => { await PT.call('servers:disconnect').catch(() => {}); PT.views.phones(); } }),
+        el('button', { class: 'danger', type: 'button', text: 'Remove this phone', onclick: forget }),
+      ]),
+    ]),
+    el('section', { class: 'panel' }, [
+      el('h2', { text: 'Outside player' }),
+      el('p', {}, [el('strong', { text: player || 'None found' })]),
+      el('p', { class: 'note', text: 'Used by Play in VLC for videos Windows can\u2019t play by itself.' }),
+      el('div', { class: 'row-actions' }, [el('button', { class: 'ghost', type: 'button', text: 'Choose a player\u2026', onclick: choosePlayer })]),
+    ]),
+    el('p', { class: 'note about', text: 'Pocket Theater for Windows ' + ((PT.state.info && PT.state.info.version) || '') })
+  );
+};
