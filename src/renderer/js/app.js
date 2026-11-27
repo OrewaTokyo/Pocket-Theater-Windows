@@ -1,4 +1,13 @@
 // Start-up.
+// 1. Terms of Use: asked on the first start, and again whenever the documents change.
+// 2. Then the phone used last, or the first phone to add.
+PT.begin = async function () {
+  let phones = [];
+  try { phones = await PT.call('servers:list'); } catch (err) { /* treated as none */ }
+  if (!phones.length) PT.views.addPhone({ first: true });
+  else PT.enter(phones[0].id, phones[0].name); // the phone used last
+};
+
 (async function () {
   const root = document.getElementById('root');
   try {
@@ -19,8 +28,13 @@
     if (box) { event.preventDefault(); box.focus(); box.select(); }
   });
 
-  let phones = [];
-  try { phones = await PT.call('servers:list'); } catch (err) { /* treated as none */ }
-  if (!phones.length) PT.views.addPhone({ first: true });
-  else PT.enter(phones[0].id, phones[0].name); // the phone used last
+  let accepted = false;
+  try {
+    accepted = (await PT.call('terms:status')).accepted;
+  } catch (err) {
+    root.textContent = err.message;
+    return;
+  }
+  if (!accepted) PT.views.terms();
+  else PT.begin();
 })();

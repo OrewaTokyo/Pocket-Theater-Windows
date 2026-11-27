@@ -299,6 +299,7 @@ function get(url, headers) {
   const secrets = { available: () => true, encrypt: (t) => Buffer.from(t).reverse(), decrypt: (b) => Buffer.from(b).reverse().toString() };
   const store = new Store(path.join(tmp, 'app'), secrets);
   const launches = [];
+  const quits = [];
   const fakeVlc = path.join(tmp, 'VLC', 'vlc.exe');
   const fakeMpc = path.join(tmp, 'MPC-HC', 'mpc-hc64.exe');
   const browsed = path.join(tmp, 'Other', 'PotPlayerMini64.exe');
@@ -314,10 +315,61 @@ function get(url, headers) {
     send: (channel, payload) => events.push({ channel, payload }),
     getWindow: () => null,
     tempDir: path.join(tmp, 'open'),
+    docsDir: path.join(__dirname, '..'),
+    quit: () => { quits.push(1); },
   });
   const call = async (ch, ...a) => { const r = await handlers.invoke(ch, ...a); if (!r.ok) { const e = new Error(r.error.message); e.code = r.error.code; throw e; } return r.data; };
   let savedPhone;
 
+  await test('nothing works until the Terms of Use are accepted, and declining closes the app', async () => {
+    assert.strictEqual((await call('terms:status')).accepted, false);
+    await assert.rejects(() => call('servers:list'), (e) => e.code === 'TERMS');
+    await assert.rejects(() => call('servers:probe', '127.0.0.1:' + phone.port), (e) => e.code === 'TERMS');
+    await assert.rejects(() => call('file:save', { lib: 'a', parts: ['b'] }), (e) => e.code === 'TERMS');
+    await assert.rejects(() => call('player:launch', { lib: 'a', parts: ['b'] }), (e) => e.code === 'TERMS');
+    const terms = await call('docs:get', 'terms');
+    assert.ok(terms.includes('Terms of Use') && terms.includes('Pocket Theater for Windows'));
+    for (const name of ['privacy', 'security', 'author']) assert.ok((await call('docs:get', name)).length > 200, name + ' can be read');
+    await assert.rejects(() => call('docs:get', '../package'), (e) => e.code === 'BAD_REQUEST');
+    await assert.rejects(() => call('docs:get', 'constructor'), (e) => e.code === 'BAD_REQUEST');
+    await call('terms:decline');
+    assert.strictEqual(quits.length, 1, 'declining closes the app');
+    assert.strictEqual((await call('terms:status')).accepted, false, 'declining accepts nothing');
+    await call('terms:accept');
+    assert.strictEqual((await call('terms:status')).accepted, true);
+  });
+  await test('acceptance is remembered, and changed or missing documents are noticed', async () => {
+    const docs = path.join(tmp, 'docs');
+    fs.mkdirSync(docs, { recursive: true });
+    const names = ['TERMS.md', 'PRIVACY.md', 'SECURITY.md', 'AUTHOR.md'];
+    names.forEach((f) => fs.copyFileSync(path.join(__dirname, '..', f), path.join(docs, f)));
+    const termsStore = new Store(path.join(tmp, 'terms-store'), secrets);
+    const make = () => createHandlers({ store: termsStore, app: { getVersion: () => '0.3.0', getPath: () => tmp }, docsDir: docs, quit() {}, send() {}, proxy: null, dialog: null, shell: null, players: null, getWindow: () => null, tempDir: tmp });
+    const status = async (h) => (await h.invoke('terms:status'));
+    let h = make();
+    assert.strictEqual((await status(h)).data.accepted, false);
+    await h.invoke('terms:accept');
+    assert.strictEqual((await status(make())).data.accepted, true, 'still accepted after a restart');
+    const saved = JSON.parse(fs.readFileSync(path.join(tmp, 'terms-store', 'settings.json'), 'utf8')).acceptedTerms;
+    assert.ok(saved.hash && saved.at && saved.version === '0.3.0');
+    // the same text with Windows line endings is still the same terms
+    names.forEach((f) => fs.writeFileSync(path.join(docs, f), fs.readFileSync(path.join(docs, f), 'utf8').replace(/\n/g, '\r\n')));
+    assert.strictEqual((await status(make())).data.accepted, true);
+    // a changed document asks again
+    fs.appendFileSync(path.join(docs, 'TERMS.md'), '\nA new clause.\n');
+    assert.strictEqual((await status(make())).data.accepted, false, 'changed terms are asked again');
+    // the Author page is not part of what is accepted
+    h = make();
+    await h.invoke('terms:accept');
+    fs.appendFileSync(path.join(docs, 'AUTHOR.md'), '\nMore about the author.\n');
+    assert.strictEqual((await status(make())).data.accepted, true);
+    // a missing document is reported, never silently accepted
+    fs.unlinkSync(path.join(docs, 'PRIVACY.md'));
+    const broken = await status(make());
+    assert.strictEqual(broken.ok, false);
+    assert.strictEqual(broken.error.code, 'DOCS_MISSING');
+    assert.strictEqual((await make().invoke('servers:list')).error.code, 'TERMS');
+  });
   await test('probe finds the phone, shows the fingerprint, and rejects things that are not a phone', async () => {
     const found = await call('servers:probe', 'https://127.0.0.1:' + phone.port);
     assert.strictEqual(found.fingerprint, probe.fingerprint);

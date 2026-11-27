@@ -32,6 +32,7 @@ let step = 0;
   page.on('console', (msg) => { if (msg.type() === 'error') problems.push('console: ' + msg.text()); });
 
   const opened = [];
+  const quit = { called: false };
   const fakeMpc = path.join(tmp, 'MPC-HC', 'mpc-hc64.exe');
   const fakePot = path.join(tmp, 'PotPlayer', 'PotPlayerMini64.exe');
   for (const f of [fakeMpc, fakePot]) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, ''); }
@@ -48,6 +49,8 @@ let step = 0;
     send: (channel, payload) => { page.evaluate(([c, p]) => window.__emit && window.__emit(c, p), [channel, payload]).catch(() => {}); },
     getWindow: () => null,
     tempDir: path.join(tmp, 'open'),
+    docsDir: path.join(__dirname, '..'),
+    quit: () => { quit.called = true; },
   });
 
   await page.exposeFunction('__invoke', (channel, args) => handlers.invoke(channel, ...args));
@@ -77,8 +80,36 @@ let step = 0;
 
   await page.goto('file://' + path.join(__dirname, '..', 'src', 'renderer', 'index.html'));
 
+  console.log('First run: the Terms of Use');
+  await text('Before you start').waitFor();
+  await page.locator('.terms-doc h2:has-text("Terms of Use")').first().waitFor();
+  assert.ok(await page.locator('.terms-doc').innerText().then((t) => /Pocket Theater for Windows/.test(t)), 'the Windows terms are shown');
+  assert.strictEqual(await page.locator('#address').count(), 0, 'nothing else is reachable before accepting');
+  await shot('terms-first-run');
+  await page.click('button.tab:has-text("Privacy Policy")');
+  await page.locator('.terms-doc table').first().waitFor();
+  await page.click('button.tab:has-text("Security Policy")');
+  await page.locator('.terms-doc h3:has-text("What is protected")').waitFor();
+  await page.click('button.tab:has-text("Terms of Use")');
+  await page.locator('.terms-doc button.linklike:has-text("Privacy Policy")').first().click();   // a link inside the terms opens that document
+  await page.locator('.modal h2:has-text("Privacy Policy")').waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('.modal').waitFor({ state: 'detached' });
+  await page.click('button:has-text("Decline")');
+  await text('You need to accept to use Pocket Theater').waitFor();
+  await shot('terms-decline');
+  await page.click('.modal button:has-text("Read the terms again")');
+  assert.strictEqual(quit.called, false, 'going back does not close the app');
+  await page.click('button:has-text("Decline")');
+  await page.click('.modal button:has-text("Close the app")');
+  await page.waitForFunction(() => true);
+  await sleep(200);
+  assert.strictEqual(quit.called, true, 'declining closes the app');
+  await page.click('button:has-text("Accept and continue")');
+
   console.log('First run: add the phone');
   await page.locator('#address').waitFor();
+  await page.locator('.doc-links button:has-text("Author")').waitFor();
   await shot('add-phone');
   await page.fill('#address', '127.0.0.1:' + phone.port);
   await page.click('text=Find phone');
@@ -204,6 +235,10 @@ let step = 0;
   await page.fill('#new', 'a-better-password-9');
   await page.click('button:has-text("Change password")');
   await text('Password changed.').waitFor();
+  await text('About and legal').waitFor();
+  await page.click('.panel button:has-text("Author")');
+  await page.locator('.modal h2:has-text("Author")').waitFor();
+  await page.keyboard.press('Escape');
   await shot('account');
 
   console.log('Lost connection and coming back');

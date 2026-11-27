@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Connection, readAll } = require('./connection');
 const { probeCertificate } = require('./tls-trust');
 const { AppError, fromNetworkError, CERT_MESSAGE } = require('./errors');
@@ -9,14 +10,20 @@ const { downloadFile } = require('./files');
 
 const GET_ALLOWED = /^\/api\/(me|libraries|list\?[^\s]*|admin\/(overview|users|devices))$/;
 const POST_ALLOWED = /^\/api\/(pair\/(start|cancel)|admin\/(end|device|user))$/;
-const LEGAL_DOCS = new Set(['terms', 'privacy', 'security']);
+const LEGAL_DOCS = new Set(['terms', 'privacy', 'security']);   // the phone's own pages, shown when asking for access
+
+// The app's own documents, shipped next to the program. Accepting means accepting all of the first three.
+const APP_DOCS = { terms: 'TERMS.md', privacy: 'PRIVACY.md', security: 'SECURITY.md', author: 'AUTHOR.md' };
+const ACCEPTED_DOCS = ['terms', 'privacy', 'security'];
+// Everything else is refused until the Terms of Use are accepted.
+const BEFORE_TERMS = new Set(['app:info', 'terms:status', 'terms:accept', 'terms:decline', 'docs:get', 'media:base']);
 
 /**
  * Everything the window can ask for. Electron things (dialogs, the shell, folders) come in through `ctx`, so
  * tests can run all of this with plain Node.
  *
  * ctx: { store, proxy, dialog, shell, app: { getPath(name), getVersion() }, players, send(channel, payload),
- *        getWindow(), tempDir }
+ *        getWindow(), tempDir, docsDir, quit() }
  */
 function createHandlers(ctx) {
   const state = { conn: null, serverId: null, username: null, downloads: new Map(), saved: new Map() };
@@ -59,6 +66,37 @@ function createHandlers(ctx) {
       throw new AppError('That file could not be found.', 'BAD_REQUEST');
     }
     return { lib, parts, name: parts[parts.length - 1] };
+  }
+
+  // ---- the Terms of Use ----
+  let termsHash = null;
+
+  function readDoc(name) {
+    if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(APP_DOCS, name)) throw new AppError('Unknown page.', 'BAD_REQUEST');
+    try {
+      return fs.readFileSync(path.join(ctx.docsDir, APP_DOCS[name]), 'utf8');
+    } catch (err) {
+      throw new AppError('The ' + name + ' document is missing from this copy of the app. Download the app again.', 'DOCS_MISSING');
+    }
+  }
+
+  /** A fingerprint of the documents that are accepted. If any of them changes, the app asks again. */
+  function currentTermsHash() {
+    if (!termsHash) {
+      const h = crypto.createHash('sha256');
+      ACCEPTED_DOCS.forEach((name) => h.update(readDoc(name).replace(/\r\n/g, '\n')));
+      termsHash = h.digest('hex');
+    }
+    return termsHash;
+  }
+
+  function termsAccepted() {
+    try {
+      const accepted = ctx.store.settings().acceptedTerms;
+      return !!(accepted && accepted.hash === currentTermsHash());
+    } catch (err) {
+      return false; // missing documents: nothing is accepted
+    }
   }
 
   // ---- video players on this PC ----
@@ -111,6 +149,22 @@ function createHandlers(ctx) {
   const handlers = {
     // ---- the app ----
     'app:info': async () => ({ version: ctx.app.getVersion(), platform: process.platform, canRemember: ctx.store.canRemember() }),
+
+    // ---- the Terms of Use ----
+    'terms:status': async () => {
+      currentTermsHash(); // says so out loud when one of the documents is missing
+      return { accepted: termsAccepted() };
+    },
+
+    'terms:accept': async () => {
+      ctx.store.setSettings({ acceptedTerms: { hash: currentTermsHash(), at: new Date().toISOString(), version: ctx.app.getVersion() } });
+      return true;
+    },
+
+    // Declining closes the app. It asks again the next time it is opened.
+    'terms:decline': async () => { ctx.quit(); return true; },
+
+    'docs:get': async (name) => readDoc(name),
 
     // ---- phones ----
     'servers:list': async () => ctx.store.list().map((s) => ctx.store.publicView(s)),
@@ -375,9 +429,12 @@ function createHandlers(ctx) {
 
   /** Runs a handler and turns any error into { ok: false, error } so the window always gets a sentence. */
   async function invoke(channel, ...args) {
-    const handler = handlers[channel];
+    const handler = Object.prototype.hasOwnProperty.call(handlers, channel) ? handlers[channel] : null;
     if (!handler) return { ok: false, error: { message: 'Unknown request.', code: 'BAD_REQUEST', status: 0 } };
     try {
+      if (!BEFORE_TERMS.has(channel) && !termsAccepted()) {
+        return { ok: false, error: { message: 'Accept the Terms of Use first.', code: 'TERMS', status: 0 } };
+      }
       return { ok: true, data: await handler(...args) };
     } catch (err) {
       if (err instanceof AppError) return { ok: false, error: { message: err.message, code: err.code, status: err.status } };

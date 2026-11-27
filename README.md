@@ -5,7 +5,7 @@ website does (browse the shared folders, play videos with subtitles, view pictur
 access, open the admin page), and adds what a website cannot do. The phone does not change: this app talks to the
 same server the website uses.
 
-**Status: prototype (0.2).** It has the website's features plus the extras below. It has not been run on a real
+**Status: prototype (0.3).** It has the website's features plus the extras below. It has not been run on a real
 Windows PC yet, only tested against a pretend phone (see Tests).
 
 ## What the app adds over the website
@@ -22,6 +22,18 @@ Windows PC yet, only tested against a pretend phone (see Tests).
 | Next episode | no | plays the next one automatically |
 | Connection drops | page breaks | the app asks the phone for the rest from the same byte, so playback and downloads carry on; a banner shows only if the phone is really gone |
 | Smooth playback | none | a 96 MB read-ahead buffer absorbs Wi-Fi dips; press **I** in the viewer for details (Wi-Fi speed vs what the video needs, buffer, dropped frames) |
+
+## Terms, privacy and security
+
+The first time the app opens (and again whenever these documents change) it asks you to accept the
+[Terms of Use](TERMS.md), which include the [Privacy Policy](PRIVACY.md) and the [Security Policy](SECURITY.md).
+**Accept** opens the app. **Decline** closes it, and it asks again next time. Nothing else in the app works
+until you accept, and that is enforced in the engine, not only in the window.
+
+The documents are copied from the phone app and extended with a "Pocket Theater for Windows" section that says
+what the Windows app stores and protects. They are in this repository ([TERMS.md](TERMS.md),
+[PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), [AUTHOR.md](AUTHOR.md)) and are shipped inside the app
+(Account page, About and legal).
 
 ## How it connects
 
@@ -48,8 +60,8 @@ Everything is built by GitHub, the same way as the Android app.
    - `.github/workflows/build-windows.yml`
 3. Upload `app.zip` to the root of the repository. It is unpacked automatically and the build starts.
 4. After a few minutes the **Releases** page has two programs:
-   - `PocketTheater-Portable-0.2.0.exe`: one file, runs without installing.
-   - `PocketTheater-Setup-0.2.0.exe`: installs like a normal program.
+   - `PocketTheater-Portable-0.3.0.exe`: one file, runs without installing.
+   - `PocketTheater-Setup-0.3.0.exe`: installs like a normal program.
 
 Windows may say "unknown publisher" the first time, because the app is not signed with a paid certificate.
 Choose More info, then Run anyway.
@@ -76,9 +88,9 @@ tests/           run-tests.js (engine), ui-smoke.js (whole window, needs Playwri
 
 ## Tests
 
-`npm test` runs 46 checks of the engine against a pretend phone that speaks the same web API: certificate
+`npm test` runs 48 checks of the engine against a pretend phone that speaks the same web API: certificate
 pinning (an impostor with another certificate gets no request at all), sign-in, automatic re-sign-in, Range
-streaming, recovery from dropped connections (playback and downloads), cancelling, finding installed players, the connection monitor, admin pairing, and safety rules.
+streaming, recovery from dropped connections (playback and downloads), cancelling, finding installed players, the Terms of Use gate, the connection monitor, admin pairing, and safety rules.
 `node tests/ui-smoke.js` drives the real window in a headless browser and saves screenshots.
 
 ## Next steps

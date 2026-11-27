@@ -1,7 +1,7 @@
 {
   "name": "pocket-theater-windows",
   "productName": "Pocket Theater",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Windows app for Pocket Theater: browse and play the folders your phone shares, from your PC.",
   "main": "src/main/main.js",
   "author": "Pocket Theater",
@@ -21,16 +21,39 @@
     "appId": "com.pockettheater.windows",
     "productName": "Pocket Theater",
     "copyright": "Pocket Theater",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["src/**/*", "package.json"],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "TERMS.md",
+      "PRIVACY.md",
+      "SECURITY.md",
+      "AUTHOR.md",
+      "LICENSE"
+    ],
     "win": {
       "icon": "build/icon.png",
       "target": [
-        { "target": "portable", "arch": ["x64"] },
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
-    "portable": { "artifactName": "PocketTheater-Portable-${version}.${ext}" },
+    "portable": {
+      "artifactName": "PocketTheater-Portable-${version}.${ext}"
+    },
     "nsis": {
       "artifactName": "PocketTheater-Setup-${version}.${ext}",
       "oneClick": false,

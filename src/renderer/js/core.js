@@ -148,7 +148,8 @@ PT.modal = function (options) {
       resolve(tick && value !== null ? { value, checked: tick.checked } : value);
     };
     const onKey = (event) => {
-      if (event.key === 'Escape') { event.stopPropagation(); close(null); }
+      // With dialogs on top of each other, Esc closes only the top one.
+      if (event.key === 'Escape' && root.lastElementChild === overlay) { event.stopPropagation(); close(null); }
     };
     const actions = options.actions || (options.choices ? [{ label: 'Cancel', value: null, kind: 'ghost' }] : [{ label: 'OK', value: true, kind: 'go' }]);
     const buttons = actions.map((a) => el('button', { class: a.kind || 'ghost', type: 'button', text: a.label, onclick: () => close(a.value) }));

@@ -99,6 +99,12 @@ PT.pages.account = async function (main) {
         savedPlayer ? el('button', { class: 'ghost', type: 'button', text: 'Back to automatic', onclick: askEachTime }) : null,
       ]),
     ]),
-    el('p', { class: 'note about', text: 'Pocket Theater for Windows ' + ((PT.state.info && PT.state.info.version) || '') })
+    el('section', { class: 'panel' }, [
+      el('h2', { text: 'About and legal' }),
+      el('p', { class: 'note', text: 'Pocket Theater for Windows ' + ((PT.state.info && PT.state.info.version) || '') }),
+      el('div', { class: 'row-actions' }, ['terms', 'privacy', 'security', 'author'].map((name) =>
+        el('button', { class: 'ghost', type: 'button', text: PT.docs.titles[name], onclick: () => PT.docs.show(name) }))),
+    ]),
+    el('p', { class: 'note about', text: 'Free and open source. Apache License 2.0.' })
   );
 };

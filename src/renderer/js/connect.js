@@ -14,7 +14,7 @@ PT.views = PT.views || {};
 
   function screen(children, wide) {
     if (PT.shell) PT.shell.leave();
-    root().replaceChildren(el('div', { class: 'center' }, [el('div', { class: 'card' + (wide ? ' wide' : '') }, [brand()].concat(children))]));
+    root().replaceChildren(el('div', { class: 'center' }, [el('div', { class: 'card' + (wide ? ' wide' : '') }, [brand()].concat(children, [PT.docs.links()]))]));
     const first = root().querySelector('input');
     if (first) first.focus();
   }

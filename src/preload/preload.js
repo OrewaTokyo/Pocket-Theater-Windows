@@ -4,7 +4,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const REQUESTS = [
-  'app:info',
+  'app:info', 'terms:status', 'terms:accept', 'terms:decline', 'docs:get',
   'servers:list', 'servers:probe', 'servers:trust', 'servers:connect', 'servers:disconnect', 'servers:remove', 'servers:rename',
   'session:login', 'session:register', 'session:logout', 'session:me', 'session:password',
   'api:get', 'api:post', 'legal:get', 'pair:qr', 'monitor:fast', 'media:base',

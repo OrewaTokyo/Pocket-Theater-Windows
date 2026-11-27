@@ -94,6 +94,8 @@ async function main() {
     send,
     getWindow: () => win,
     tempDir: path.join(app.getPath('temp'), 'PocketTheater-open'),
+    docsDir: app.getAppPath(), // TERMS.md, PRIVACY.md, SECURITY.md and AUTHOR.md ship next to the program
+    quit: () => app.quit(),
   });
 
   for (const channel of handlers.channels) {

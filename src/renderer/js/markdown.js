@@ -59,7 +59,12 @@ PT.md = {
     PT.md.inline(text).forEach((piece) => {
       if (piece.t === "b") el.append(PT.util.el("strong", { text: piece.text }));
       else if (piece.t === "code") el.append(PT.util.el("code", { text: piece.text }));
-      else if (piece.t === "a") el.append(PT.util.el("span", { class: "doc-link", text: piece.text }));
+      else if (piece.t === "a") {
+        // A link to one of the app's own documents opens it. Any other link is shown as plain text.
+        const local = /^(terms|privacy|security|author)\.md$/i.exec(piece.href);
+        if (local && PT.docs) el.append(PT.util.el("button", { class: "linklike", type: "button", text: piece.text, onclick: () => PT.docs.show(local[1].toLowerCase()) }));
+        else el.append(PT.util.el("span", { class: "doc-link", text: piece.text }));
+      }
       else el.append(document.createTextNode(piece.text));
     });
     return el;
